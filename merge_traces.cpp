@@ -42,7 +42,13 @@ void mergeAndTransformCsv(const std::vector<std::string>& inputFiles,
   std::unordered_set<std::string> defaultOps = {"get", "gets", "delete"};
   std::unordered_set<std::string> extendedOps = {
       "set", "cas", "add", "replace", "incr", "decr", "prepend", "append"};
-
+  
+  size_t estimatedLines = 0;
+  for (const auto& file : inputFiles) {
+    std::ifstream inFile(file, std::ifstream::ate | std::ifstream::binary);
+    estimatedLines += inFile.tellg() / 90;
+  }
+  int processedLines = 0;
   for (size_t i = 0; i < inputFiles.size(); ++i) {
     auto reader = std::make_unique<io::CSVReader<7>>(inputFiles[i]);
     TraceEntry entry;
@@ -71,6 +77,12 @@ void mergeAndTransformCsv(const std::vector<std::string>& inputFiles,
             << smallest.key_size << "," << smallest.value_size << ","
             << smallest.client_id << "," << smallest.operation << ","
             << smallest.TTL << "\n";
+    
+    processedLines++;	
+    if (processedLines % 100000 == 0) {
+     	double progress = (double)processedLines / estimatedLines * 100;
+      	std::cout << "Progress: " << progress << "%\r" << std::flush;
+    }
 
     size_t fileIndex = smallest.fileIndex;
     TraceEntry nextEntry;
