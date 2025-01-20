@@ -86,7 +86,7 @@ void mergeAndTransformCsv(const std::vector<std::string>& inputFiles,
 
     size_t fileIndex = smallest.fileIndex;
     TraceEntry nextEntry;
-    if (readers[fileIndex]->read_row(nextEntry.timestamp,
+    while(readers[fileIndex]->read_row(nextEntry.timestamp,
                                      nextEntry.key,
                                      nextEntry.key_size,
                                      nextEntry.value_size,
@@ -96,7 +96,10 @@ void mergeAndTransformCsv(const std::vector<std::string>& inputFiles,
       nextEntry.fileIndex = fileIndex;
       if (defaultOps.count(nextEntry.operation) > 0 ||
           (includeSetOps && extendedOps.count(nextEntry.operation) > 0)) {
-        minHeap.push(nextEntry);
+	if(nextEntry.value_size > 0) {      
+            minHeap.push(nextEntry);
+	    break;
+	}
       }
     }
 
