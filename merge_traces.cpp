@@ -53,7 +53,7 @@ void mergeAndTransformCsv(const std::vector<std::string>& inputFiles,
     auto reader = std::make_unique<io::CSVReader<7>>(inputFiles[i]);
     TraceEntry entry;
 
-    if (reader->read_row(entry.timestamp,
+    while (reader->read_row(entry.timestamp,
                          entry.key,
                          entry.key_size,
                          entry.value_size,
@@ -62,8 +62,11 @@ void mergeAndTransformCsv(const std::vector<std::string>& inputFiles,
                          entry.TTL)) {
       if (defaultOps.count(entry.operation) > 0 ||
           (includeSetOps && extendedOps.count(entry.operation) > 0)) {
-        entry.fileIndex = i;
-        minHeap.push(entry);
+	if(entry.value_size > 0) {     
+           entry.fileIndex = i;
+           minHeap.push(entry);
+	   break;
+	}
       }
     }
     readers.push_back(std::move(reader));
