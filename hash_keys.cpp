@@ -1,68 +1,77 @@
 #include <iostream>
-#include <fstream>
 #include <string>
-#include <sstream>
+#include <vector>
 #include <unordered_map>
-#include <set>
-#include "md5.h"
+#include <unordered_set>
+#include <fstream>
+#include <sstream>
 
-int main(int argc, char** argv)
+#include "robin_hood.h"
+#include "csv.h"
+#include "md5.h"   
+
+
+std::string md5Truncate(const std::string &input, size_t length) {
+    MD5 md5;
+    md5.addData(input.data(), input.size()).finalize();
+    std::string hashHex = md5.toString();
+    
+    return hashHex.substr(0, length);
+
+}
+
+int main(int argc, char* argv[])
 {
     if (argc < 2) {
-        std::cerr << "usage: " << argv[0] << " <trace_file>\n";
+        std::cerr << "[Usage] " << argv[0] << " <input_csv_file>\n";
         return 1;
     }
 
-    std::string traceFile = argv[1];
-    std::ifstream ifs(traceFile);
-    if (!ifs.is_open()) {
-        std::cerr << "fail to open files: " << traceFile << "\n";
-        return 1;
-    }
-
-    // Only unique keys
-    std::set<std::string> uniqueKeys; 
-
-    std::string line;
-    while (std::getline(ifs, line)) {
-        if (line.empty()) continue;
-
-        auto pos = line.find(',');
-        if (pos == std::string::npos) {
-            uniqueKeys.insert(line);
-        } else {
-            std::string key = line.substr(0, pos);
+    const std::string inputCsvFile = argv[1];
+    
+    std::unordered_set<std::string> uniqueKeys;
+    
+    try {
+        io::CSVReader<5> in(inputCsvFile);
+        in.read_header(io::ignore_extra_column,
+                       "key", "op", "size", "op_count", "key_size");
+        
+        std::string key, op;
+        int size, op_count, key_size;
+        
+        while (in.read_row(key, op, size, op_count, key_size)) {
             uniqueKeys.insert(key);
         }
+    } catch (const io::error::base& e) {
+        std::cerr << "CSV parsing error: " << e.what() << "\n";
+        return 1;
     }
-    ifs.close();
+    
+    std::vector<size_t> testLengths = {16, 17, 18};
 
-    for (int cutLen : {16, 17, 18}) {
-        std::unordered_map<std::string, std::string> hashMap;
-        bool collisionFound = false;
+    for (auto len : testLengths) {
+        std::cout << "\n[ Checking MD5 hash collision for length = " << len << " ]\n";
+        
+        robin_hood::unordered_map<std::string, std::string> hashMap;
+        
+        bool conflictFound = false;
 
-        for (auto &originalKey : uniqueKeys) {
-            MD5 md5;
-            md5.addData(originalKey.data(), originalKey.size());
-            md5.finalize();
-
-            std::string hash32 = md5.toString();
-            std::string subHash = hash32.substr(0, cutLen);
-
-            auto it = hashMap.find(subHash);
+        for (const auto &origKey : uniqueKeys) {
+            std::string hashedKey = md5Truncate(origKey, len);
+            
+            auto it = hashMap.find(hashedKey);
             if (it != hashMap.end()) {
-                collisionFound = true;
-                std::cout << "[Collision] MD5 " << cutLen << "hash collision!\n"
-                          << "  - Hash value: " << subHash << "\n"
-                          << "  - original key: " << it->second << "\n"
-                          << "  - Hashed Key: " << originalKey << "\n\n";
+                conflictFound = true;
+                std::cout << "Conflict detected! HashedKey='" << hashedKey
+                          << "'\n - Existing Original Key: " << it->second
+                          << "\n - New Original Key:      " << origKey << "\n\n";
             } else {
-                hashMap[subHash] = originalKey;
+                hashMap[hashedKey] = origKey;
             }
         }
 
-        if (!collisionFound) {
-            std::cout << cutLen << "No hash collision\n";
+        if (!conflictFound) {
+            std::cout << "No conflicts for hash length = " << len << "\n";
         }
     }
 
