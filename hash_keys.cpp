@@ -12,7 +12,7 @@
 
 
 std::string md5Truncate(const std::string &input, size_t length) {
-    MD5 md5;
+    Chocobo1::MD5 md5;
     md5.addData(input.data(), input.size()).finalize();
     std::string hashHex = md5.toString();
     
@@ -35,12 +35,16 @@ int main(int argc, char* argv[])
         io::CSVReader<5> in(inputCsvFile);
         in.read_header(io::ignore_extra_column,
                        "key", "op", "size", "op_count", "key_size");
-        
+        size_t lineCount = 0; 
         std::string key, op;
         int size, op_count, key_size;
         
         while (in.read_row(key, op, size, op_count, key_size)) {
-            uniqueKeys.insert(key);
+            lineCount++;
+	    if(lineCount % 10000000 == 0) {
+	       std::cout << "Processed " << lineCount << " lines so far...\n";
+	    }
+	    uniqueKeys.insert(key);
         }
     } catch (const io::error::base& e) {
         std::cerr << "CSV parsing error: " << e.what() << "\n";
