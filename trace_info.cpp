@@ -23,11 +23,15 @@ struct StatsAccumulator {
 };
 
 struct Stats {
-    double avgKeySize       = 0.0;
-    double avgValueSize     = 0.0;
-    double avgObjectSize    = 0.0;
-    long long sumObjectSize = 0;
-    long long sumKeyBasedAvg= 0;
+    double avgKeySize        = 0.0;
+    double avgValueSize      = 0.0;
+    double avgObjectSize     = 0.0;
+    long long sumObjectSize  = 0;
+    long long sumKeyBasedAvg = 0;
+    
+    long long uniqueKeyCount = 0;
+    long long totalKeyCount  = 0;
+    long long lineCount      = 0;
 };
 
 // ----------------------------------------------------------------
@@ -42,8 +46,12 @@ inline void updateStats(StatsAccumulator &acc,
     acc.totalKeySize    += keySize;
     acc.totalValueSize  += valueSize;
     acc.totalObjectSize += objectSize;
-    acc.lineCount++;
+    
+    if(acc.lineCount % 100000000 == 0){
+        std::cout << "Processing " << acc.lineCount << " line, remaining line: " << (61700000000 - acc.lineCount) << "\n"; 
+    }
 
+    acc.lineCount++;
     // Update key-based accumulation
     auto &agg = acc.mapKeyAgg[key];
     agg.sumObjectSize += objectSize;
@@ -66,10 +74,10 @@ Stats computeStats(const StatsAccumulator &acc)
     s.avgValueSize  = static_cast<double>(acc.totalValueSize)  / acc.lineCount;
     s.avgObjectSize = static_cast<double>(acc.totalObjectSize) / acc.lineCount;
 
-    // Total object size (footprint1)
+    // Total object size (Footprint1)
     s.sumObjectSize = acc.totalObjectSize;
 
-    // Sum of average object size for each key (footprint2)
+    // Sum of average object size for each key (Footprint2)
     long long sumKeyAverages = 0;
     for (const auto &kv : acc.mapKeyAgg) {
         const auto &agg = kv.second;
@@ -78,6 +86,10 @@ Stats computeStats(const StatsAccumulator &acc)
         }
     }
     s.sumKeyBasedAvg = sumKeyAverages;
+    
+    s.uniqueKeyCount = acc.mapKeyAgg.size();
+    s.totalKeyCount  = acc.lineCount;
+    s.lineCount      = acc.lineCount;
 
     return s;
 }
@@ -92,6 +104,9 @@ void printStats(std::ostream &out, const Stats &st, const std::string &title) {
     out << "  Average object size  : " << std::fixed << std::setprecision(2) << st.avgObjectSize << "\n";
     out << "  Footprint1 (sum of object size)               : " << st.sumObjectSize << "\n";
     out << "  Footprint2 (sum of average of duplicated key) : " << st.sumKeyBasedAvg << "\n";
+    out << "  Unique key count     : " << st.uniqueKeyCount << "\n";
+    out << "  Total key count      : " << st.totalKeyCount  << "\n";
+    out << "  Total line count     : " << st.lineCount      << "\n";
     out << std::endl;
 }
 
@@ -101,7 +116,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "Usage: " << argv[0] << " <trace_file> <output_file>\n";
         return 1;
     }
-
     // Open the input trace file
     const char* traceFilePath = argv[1];
     std::ifstream fin(traceFilePath);
@@ -109,7 +123,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "Cannot open input file: " << traceFilePath << "\n";
         return 1;
     }
-
     // Open the output file
     const char* outputFilePath = argv[2];
     std::ofstream fout(outputFilePath);
@@ -130,34 +143,7 @@ int main(int argc, char* argv[]) {
     {
         std::string headerLine;
         if (std::getline(fin, headerLine)) {
-            // If the line starts with "key,op,size,op_count,key_size", assume it's a header
-            // Otherwise, parse it as a data line
-            if (headerLine.rfind("key,op,size,op_count,key_size", 0) != 0) {
-                // Not a header -> parse it right away
-                std::stringstream ss(headerLine);
-                std::string key, op;
-                std::string objectSizeStr, opCountStr, keySizeStr;
-                if (std::getline(ss, key, ',') &&
-                    std::getline(ss, op, ',') &&
-                    std::getline(ss, objectSizeStr, ',') &&
-                    std::getline(ss, opCountStr, ',') &&
-                    std::getline(ss, keySizeStr, ','))
-                {
-                    int objectSize  = std::stoi(objectSizeStr);
-                    int opCount     = std::stoi(opCountStr);
-                    int keySize     = std::stoi(keySizeStr);
-                    int valueSize   = objectSize - keySize;
-
-                    // Update accumulators
-                    updateStats(accAll, key, keySize, valueSize, objectSize);
-                    if (objectSize <= TWO_KB) {
-                        updateStats(accUnder2KB, key, keySize, valueSize, objectSize);
-                    } else {
-                        updateStats(accOver2KB, key, keySize, valueSize, objectSize);
-                    }
-                }
-            }
-            // If it's a real header, do nothing (skip the line)
+            // If needed, you can check if the header contains expected field names.
         }
     }
 
@@ -165,10 +151,7 @@ int main(int argc, char* argv[]) {
     // (2) Read each line, parse, and accumulate
     // --------------------------------------------------
     std::string line;
-    while (true) {
-        if (!std::getline(fin, line)) {
-            break;
-        }
+    while (std::getline(fin, line)) {
         if (line.empty()) {
             continue;
         }
@@ -189,7 +172,7 @@ int main(int argc, char* argv[]) {
         // Update 'All' accumulator
         updateStats(accAll, key, keySize, valueSize, objectSize);
 
-        // Determine which group (under2KB or over2KB)
+        // Determine which group (Under 2KB or Over 2KB)
         if (objectSize <= TWO_KB) {
             updateStats(accUnder2KB, key, keySize, valueSize, objectSize);
         } else {
@@ -199,7 +182,7 @@ int main(int argc, char* argv[]) {
     fin.close();
 
     // --------------------------------------------------
-    // (3) Compute final statistics
+    // (3) Compute final statistics for each accumulator
     // --------------------------------------------------
     Stats statAll      = computeStats(accAll);
     Stats statUnder2KB = computeStats(accUnder2KB);
@@ -212,7 +195,7 @@ int main(int argc, char* argv[]) {
     printStats(fout, statOver2KB,  "Over 2KB");
     printStats(fout, statAll,      "All");
 
-    // You can also print to the console if desired:
+    // Optionally, also print to the console:
     // printStats(std::cout, statUnder2KB, "Under 2KB");
     // printStats(std::cout, statOver2KB,  "Over 2KB");
     // printStats(std::cout, statAll,      "All");
