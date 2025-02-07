@@ -1,10 +1,18 @@
 #include "include/argparse/argparse.hpp"
-#include "include/csv/csv.hpp"
+#include "include/csv/csv.h"
 #include <chrono>
 #include <filesystem>
-#include <format>
+#include <fmt/core.h>
 #include <fstream>
 #include <vector>
+
+struct Row {
+  std::string key;
+  std::string op;
+  uint32_t size;
+  uint32_t op_count;
+  uint32_t key_size;
+};
 
 int main(int argc, char **argv) {
   argparse::ArgumentParser options("parser");
@@ -30,11 +38,13 @@ int main(int argc, char **argv) {
 
   auto traceFilePath = options.get<std::string>("--input");
   if (!std::filesystem::exists(traceFilePath)) {
-    std::cerr << std::format("Trace file: {} does not exist", traceFilePath)
+    std::cerr << fmt::format("Trace file: {} does not exist", traceFilePath)
               << std::endl;
     std::exit(1);
   }
-  csv::CSVReader reader(traceFilePath);
+  io::CSVReader<5> csvReader(traceFilePath);
+  csvReader.read_header(
+      io::ignore_extra_column, "key", "op", "size", "op_count", "key_size");
 
   // Header: key,op,size,op_count,key_size
   auto outputPrefix = options.get<std::string>("--output");
@@ -45,32 +55,30 @@ int main(int argc, char **argv) {
 
   // To check throughput
   auto start = std::chrono::high_resolution_clock::now();
-  for (const auto &row : reader) {
+
+  Row r;
+  while (csvReader.read_row(r.key, r.op, r.size, r.op_count, r.key_size)) {
     if (numLines % targetNumLines == 0) {
       // Calculate throughput
       auto end = std::chrono::high_resolution_clock::now();
       std::chrono::duration<double> elapsed = end - start;
-      std::cout << std::format("Processing throughput: {:.2f} / sec (total {} "
+      std::cout << fmt::format("Processing throughput: {:.2f} / sec (total {} "
                                "lines are processed)",
                                numLines / elapsed.count(), numLines)
                 << std::endl;
 
       output.close();
       auto outputFileName =
-          std::format("./{}_{}.csv", outputPrefix, numLines / targetNumLines);
+          fmt::format("./{}_{}.csv", outputPrefix, numLines / targetNumLines);
       output.open(outputFileName, std::ios::out);
       // Write header for each split file
       output << "key,op,size,op_count,key_size" << "\n";
     }
-    output << std::format("{},{},{},{},{}", row["key"].get<std::string>(),
-                          row["op"].get<std::string>(),
-                          row["size"].get<std::string>(),
-                          row["op_count"].get<std::string>(),
-                          row["key_size"].get<std::string>())
-           << "\n";
+    output << fmt::format("{},{},{},{},{}", 
+        r.key, r.op, r.size, r.op_count, r.key_size) << "\n";
     numLines++;
   }
 
-  std::cout << std::format("total processed lines: {}", numLines) << std::endl;
+  std::cout << fmt::format("total processed lines: {}", numLines) << std::endl;
   return 0;
 }
