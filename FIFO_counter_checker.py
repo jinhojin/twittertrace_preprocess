@@ -23,8 +23,7 @@ def parse_log_for_counts(log_file_path):
 
             if fifo_pattern.search(line):
                 counts.append(current_count)
-                current_count = 0
-
+                
 
     return counts
 
