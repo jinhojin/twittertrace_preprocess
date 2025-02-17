@@ -1,9 +1,9 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <unordered_map>
 #include <iomanip>
 
+#include "include/robin_hood/robin_hood.h"
 #include "include/csv/csv.h"
 
 static const int TWO_KB = 2048;
@@ -22,7 +22,7 @@ struct StatsAccumulator {
     long long lineCount = 0;
     
     // Map from key to its aggregate (sum of object sizes and count)
-    std::unordered_map<std::string, KeyAgg> mapKeyAgg;
+    robin_hood::unordered_map<std::string, KeyAgg> mapKeyAgg;
 };
 
 // Structure to hold the final computed statistics.
