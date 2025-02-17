@@ -2,30 +2,28 @@
 #include <fstream>
 #include <string>
 #include <iomanip>
+#include <vector>
 
 #include "include/robin_hood/robin_hood.h"
 #include "include/csv/csv.h"
+#include "include/argparse/argparse.hpp"
 
 static const int TWO_KB = 2048;
 
-// Structure to accumulate key-based statistics.
 struct KeyAgg {
     long long sumObjectSize = 0;
     long long count = 0;
 };
 
-// Structure to accumulate statistics while processing the CSV.
 struct StatsAccumulator {
     long long totalKeySize = 0;
     long long totalValueSize = 0;
     long long totalObjectSize = 0;
     long long lineCount = 0;
     
-    // Map from key to its aggregate (sum of object sizes and count)
     robin_hood::unordered_map<std::string, KeyAgg> mapKeyAgg;
 };
 
-// Structure to hold the final computed statistics.
 struct Stats {
     double avgKeySize = 0.0;
     double avgValueSize = 0.0;
@@ -38,7 +36,7 @@ struct Stats {
 };
 
 // ----------------------------------------------------------------
-// Update the accumulator with one CSV record.
+// Read oneline and update
 // ----------------------------------------------------------------
 inline void updateStats(StatsAccumulator &acc, 
                         const std::string &key, 
@@ -50,29 +48,26 @@ inline void updateStats(StatsAccumulator &acc,
     acc.totalValueSize  += valueSize;
     acc.totalObjectSize += objectSize;
     
-    // Optional: print progress every 100M lines
-    if (acc.lineCount % 100000000 == 0) {
+    if (acc.lineCount > 0 && acc.lineCount % 100000000 == 0) {
         std::cout << "Processing " << acc.lineCount 
-                  << " lines, remaining line: " 
-                  << (61700000000LL - acc.lineCount) << "\n";
+                  << " lines, maybe more...\n";
     }
-    
     acc.lineCount++;
     
-    // Update the key-based aggregation.
     auto &agg = acc.mapKeyAgg[key];
     agg.sumObjectSize += objectSize;
     agg.count++;
 }
 
 // ----------------------------------------------------------------
-// Compute final statistics from an accumulator.
+// StatsAccumulator => Stats
 // ----------------------------------------------------------------
 Stats computeStats(const StatsAccumulator &acc)
 {
     Stats s;
-    if (acc.lineCount == 0)
+    if (acc.lineCount == 0) {
         return s;
+    }
     
     s.avgKeySize    = static_cast<double>(acc.totalKeySize)    / acc.lineCount;
     s.avgValueSize  = static_cast<double>(acc.totalValueSize)  / acc.lineCount;
@@ -82,8 +77,9 @@ Stats computeStats(const StatsAccumulator &acc)
     long long sumKeyAverages = 0;
     for (const auto &kv : acc.mapKeyAgg) {
         const auto &agg = kv.second;
-        if (agg.count > 0)
+        if (agg.count > 0) {
             sumKeyAverages += (agg.sumObjectSize / agg.count);
+        }
     }
     s.sumKeyBasedAvg = sumKeyAverages;
     s.uniqueKeyCount = acc.mapKeyAgg.size();
@@ -94,7 +90,7 @@ Stats computeStats(const StatsAccumulator &acc)
 }
 
 // ----------------------------------------------------------------
-// Print the computed statistics.
+// Print stats
 // ----------------------------------------------------------------
 void printStats(std::ostream &out, const Stats &st, const std::string &title) {
     out << "=== " << title << " ===\n";
@@ -109,65 +105,74 @@ void printStats(std::ostream &out, const Stats &st, const std::string &title) {
 }
 
 int main(int argc, char* argv[]) {
-    // Expecting two arguments: the input CSV file and the output file.
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <trace_file> <output_file>\n";
+    argparse::ArgumentParser program("csv_analyzer", "1.0");
+    
+    program.add_argument("-o", "--output")
+        .required()
+        .help("Output file path");
+    
+    program.add_argument("input_files")
+        .help("One or more CSV trace files to analyze")
+        .remaining();
+    
+    try {
+        program.parse_args(argc, argv);
+    } catch (const std::runtime_error &err) {
+        std::cerr << err.what() << std::endl;
+        std::cerr << program;
+        return 1;
+    }
+
+    auto outputFilePath = program.get<std::string>("--output");
+    
+    std::vector<std::string> traceFiles;
+    try {
+        traceFiles = program.get<std::vector<std::string>>("input_files");
+        if (traceFiles.empty()) {
+            std::cerr << "No input files provided.\n";
+            return 1;
+        }
+    } catch (...) {
+        std::cerr << "No input files provided.\n";
         return 1;
     }
     
-    const char* traceFilePath = argv[1];
-    const char* outputFilePath = argv[2];
-    
-    // Open the output file.
     std::ofstream fout(outputFilePath);
     if (!fout.is_open()) {
         std::cerr << "Cannot open output file: " << outputFilePath << "\n";
         return 1;
     }
     
-    // Prepare three accumulators:
-    //   1) For all data.
-    //   2) For records with object size <= 2KB.
-    //   3) For records with object size > 2KB.
     StatsAccumulator accAll, accUnder2KB, accOver2KB;
     
-    // ----------------------------------------------------------------
-    // Create a CSVReader using fast-cpp-csv-parser.
-    // We specify that we expect 5 columns.
-    // The CSV file is expected to have a header row with:
-    // "key", "op", "size", "op_count", "key_size"
-    // io::ignore_extra_column ignores any additional columns.
-    io::CSVReader<5> csvIn(traceFilePath);
-    csvIn.read_header(io::ignore_extra_column, "key", "op", "size", "op_count", "key_size");
-    
-    // Variables to hold the CSV row fields.
-    std::string key, op;
-    int size, op_count, key_size;
-    
-    // Read each row and update the accumulators.
-    while (csvIn.read_row(key, op, size, op_count, key_size)) {
-        int objectSize = size;  // "size" is the object size.
-        int valueSize = objectSize - key_size;
+    for (const auto &filePath : traceFiles) {
+        io::CSVReader<5> csvIn(filePath);
+        csvIn.read_header(io::ignore_extra_column, 
+                          "key", "op", "size", "op_count", "key_size");
         
-        // Update the "All" accumulator.
-        updateStats(accAll, key, key_size, valueSize, objectSize);
+        std::string key, op;
+        int size = 0, op_count = 0, key_size = 0;
         
-        // Update the appropriate accumulator based on object size.
-        if (objectSize <= TWO_KB)
-            updateStats(accUnder2KB, key, key_size, valueSize, objectSize);
-        else
-            updateStats(accOver2KB, key, key_size, valueSize, objectSize);
+        while (csvIn.read_row(key, op, size, op_count, key_size)) {
+            int objectSize = size;  
+            int valueSize = objectSize - key_size;
+            
+            updateStats(accAll,      key, key_size, valueSize, objectSize);
+            if (objectSize <= TWO_KB) {
+                updateStats(accUnder2KB, key, key_size, valueSize, objectSize);
+            } else {
+                updateStats(accOver2KB,  key, key_size, valueSize, objectSize);
+            }
+        }
     }
     
-    // Compute final statistics.
     Stats statAll      = computeStats(accAll);
     Stats statUnder2KB = computeStats(accUnder2KB);
     Stats statOver2KB  = computeStats(accOver2KB);
     
-    // Output the results.
     printStats(fout, statUnder2KB, "Under 2KB");
-    printStats(fout, statOver2KB, "Over 2KB");
-    printStats(fout, statAll, "All");
+    printStats(fout, statOver2KB,  "Over 2KB");
+    printStats(fout, statAll,      "All");
     
     fout.close();
     return 0;
