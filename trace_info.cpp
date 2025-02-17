@@ -11,15 +11,15 @@
 static const int TWO_KB = 2048;
 
 struct KeyAgg {
-    long long sumObjectSize = 0;
-    long long count = 0;
+    uint64_t sumObjectSize = 0;
+    uint64_t count = 0;
 };
 
 struct StatsAccumulator {
-    long long totalKeySize = 0;
-    long long totalValueSize = 0;
-    long long totalObjectSize = 0;
-    long long lineCount = 0;
+    uint64_t totalKeySize = 0;
+    uint64_t totalValueSize = 0;
+    uint64_t totalObjectSize = 0;
+    uint64_t lineCount = 0;
     
     robin_hood::unordered_map<std::string, KeyAgg> mapKeyAgg;
 };
@@ -28,11 +28,11 @@ struct Stats {
     double avgKeySize = 0.0;
     double avgValueSize = 0.0;
     double avgObjectSize = 0.0;
-    long long sumObjectSize = 0;
-    long long sumKeyBasedAvg = 0;
-    long long uniqueKeyCount = 0;
-    long long totalKeyCount = 0;
-    long long lineCount = 0;
+    uint64_t sumObjectSize = 0;
+    uint64_t sumKeyBasedAvg = 0;
+    uint64_t uniqueKeyCount = 0;
+    uint64_t totalKeyCount = 0;
+    uint64_t lineCount = 0;
 };
 
 // ----------------------------------------------------------------
@@ -40,9 +40,9 @@ struct Stats {
 // ----------------------------------------------------------------
 inline void updateStats(StatsAccumulator &acc, 
                         const std::string &key, 
-                        int keySize, 
-                        int valueSize, 
-                        int objectSize) 
+                        uint32_t keySize, 
+                        uint32_t valueSize, 
+                        uint32_t objectSize) 
 {
     acc.totalKeySize    += keySize;
     acc.totalValueSize  += valueSize;
@@ -74,7 +74,7 @@ Stats computeStats(const StatsAccumulator &acc)
     s.avgObjectSize = static_cast<double>(acc.totalObjectSize) / acc.lineCount;
     s.sumObjectSize = acc.totalObjectSize;
     
-    long long sumKeyAverages = 0;
+    uint64_t sumKeyAverages = 0;
     for (const auto &kv : acc.mapKeyAgg) {
         const auto &agg = kv.second;
         if (agg.count > 0) {
@@ -145,17 +145,18 @@ int main(int argc, char* argv[]) {
     
     StatsAccumulator accAll, accUnder2KB, accOver2KB;
     
+    uint32_t maxObjSize = 0;
     for (const auto &filePath : traceFiles) {
         io::CSVReader<5> csvIn(filePath);
         csvIn.read_header(io::ignore_extra_column, 
                           "key", "op", "size", "op_count", "key_size");
         
         std::string key, op;
-        int size = 0, op_count = 0, key_size = 0;
+        uint32_t size = 0, op_count = 0, key_size = 0;
         
         while (csvIn.read_row(key, op, size, op_count, key_size)) {
-            int objectSize = size;  
-            int valueSize = objectSize - key_size;
+            uint32_t objectSize = size;  
+            uint32_t valueSize = objectSize - key_size;
             
             updateStats(accAll,      key, key_size, valueSize, objectSize);
             if (objectSize <= TWO_KB) {
@@ -163,6 +164,7 @@ int main(int argc, char* argv[]) {
             } else {
                 updateStats(accOver2KB,  key, key_size, valueSize, objectSize);
             }
+	    maxObjSize = std::max(maxObjSize, objectSize);
         }
     }
     
@@ -174,6 +176,7 @@ int main(int argc, char* argv[]) {
     printStats(fout, statOver2KB,  "Over 2KB");
     printStats(fout, statAll,      "All");
     
+    std::cout << "max obj size: " << maxObjSize << std::endl;
     fout.close();
     return 0;
 }
