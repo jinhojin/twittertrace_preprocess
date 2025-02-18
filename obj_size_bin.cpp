@@ -8,10 +8,9 @@
 int main(int argc, char *argv[]) {
   argparse::ArgumentParser program("csv_analyzer", "1.0");
 
-  program.add_argument("-o", "--output").required().help("Output file path");
-
   program.add_argument("input_files")
       .help("One or more CSV trace files to analyze")
+      .required()
       .remaining();
 
   try {
@@ -21,8 +20,6 @@ int main(int argc, char *argv[]) {
     std::cerr << program;
     return 1;
   }
-
-  auto outputFilePath = program.get<std::string>("--output");
 
   std::vector<std::string> traceFiles;
   try {
