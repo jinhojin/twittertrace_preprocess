@@ -49,6 +49,7 @@ int main(int argc, char *argv[]) {
   // Simple test
   assert(ceil_log2(64) == 6);
   assert(ceil_log2(62) == 6);
+  std::cout << ceil_log2(31) << std::endl;
 
   std::vector<uint64_t> numObjs(numBins + 1, 0);
 
@@ -61,6 +62,7 @@ int main(int argc, char *argv[]) {
     uint32_t size = 0, op_count = 0, key_size = 0;
 
     while (csvIn.read_row(key, op, size, op_count, key_size)) {
+      size = std::max(static_cast<uint32_t>(64), size);
       uint32_t binIdx = ceil_log2(size) - 6;
       numObjs[std::min(binIdx, numBins)]++;
     }
